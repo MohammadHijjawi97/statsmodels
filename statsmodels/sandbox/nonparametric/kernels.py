@@ -193,25 +193,42 @@ class CustomKernel:
                 return ([], [])
 
     def density(self, xs, x):
-        """Returns the kernel density estimate for point x based on x-values
-        xs
+        """
+        Kernel density estimate at one or more points
+
+        Parameters
+        ----------
+        xs : array_like
+            The observations used in the density estimate.
+        x : float or array_like
+            Point(s) at which the density is evaluated.
+
+        Returns
+        -------
+        ndarray
+            The density estimate at each point in `x`. The density is zero at
+            points that are outside the kernel support of all observations.
+            If `xs` is empty, nan is returned.
         """
         xs = np.asarray(xs)
-        n = len(xs)  # before in_domain?
-        if self.weights is not None:
-            xs, weights = self.in_domain(xs, self.weights, x)
-        else:
-            xs = self.in_domain(xs, xs, x)[0]
-        xs = np.asarray(xs)
-        # print 'len(xs)', len(xs), x
+        x = np.asarray(x)
+        n = len(xs)
         if xs.ndim == 1:
             xs = xs[:, None]
         if len(xs) > 0:
             h = self.h
+            u = (xs - x) / h
+            kern = self(u)
+            if self.domain is not None:
+                # Each observation only contributes to the points within its
+                # kernel support. Masking per point, instead of dropping
+                # observations, keeps the points separate when x is an array.
+                in_domain = (u >= self.domain[0]) & (u <= self.domain[1])
+                kern = np.where(in_domain, kern, 0.0)
             if self.weights is not None:
-                w = 1 / h * np.sum(self((xs - x) / h).T * weights, axis=1)
+                w = 1 / h * np.sum(kern.T * self.weights, axis=1)
             else:
-                w = 1.0 / (h * n) * np.sum(self((xs - x) / h), axis=0)
+                w = 1.0 / (h * n) * np.sum(kern, axis=0)
             return w
         else:
             return np.nan

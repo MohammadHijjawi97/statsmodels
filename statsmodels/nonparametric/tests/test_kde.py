@@ -92,16 +92,8 @@ class CheckKDE:
         )
 
     def test_evaluate(self):
-        # disable test
-        # fails for Epan, Triangular and Biweight, only Gaussian is correct
-        # added it as test method to TestKDEGauss below
-        # inDomain is not vectorized
-        # kde_vals = self.res1.evaluate(self.res1.support)
-        kde_vals = [np.squeeze(self.res1.evaluate(xi)) for xi in self.res1.support]
-        kde_vals = np.squeeze(kde_vals)  # kde_vals is a "column_list"
-        mask_valid = np.isfinite(kde_vals)
-        # TODO: nans at the boundaries
-        kde_vals[~mask_valid] = 0
+        # GH 7195: evaluate all support points at once
+        kde_vals = self.res1.evaluate(self.res1.support)
         npt.assert_almost_equal(kde_vals, self.res_density, self.decimal_density)
 
 
@@ -272,8 +264,7 @@ class CheckKDEWeights:
     def test_evaluate(self):
         if self.kernel_name == "cos":
             pytest.skip("Cosine kernel fails against Stata")
-        kde_vals = [self.res1.evaluate(xi) for xi in self.x]
-        kde_vals = np.squeeze(kde_vals)  # kde_vals is a "column_list"
+        kde_vals = self.res1.evaluate(self.x)
         npt.assert_almost_equal(kde_vals, self.res_density, self.decimal_density)
 
     def test_compare(self):
@@ -547,3 +538,28 @@ def test_kdensity_result_object_true(func):
     # The grid is computed regardless of retgrid, so it is reported rather
     # than None-filled.
     assert res.grid is not None
+
+
+@pytest.mark.parametrize(
+    "kernel, shape",
+    [
+        ("uni", lambda u: 0.5 * np.ones_like(u)),
+        ("tri", lambda u: 1 - np.abs(u)),
+        ("epa", lambda u: 0.75 * (1 - u**2)),
+    ],
+)
+def test_evaluate_vectorized_bounded_kernel(kernel, shape):
+    # GH 7195: with a finite support kernel, evaluating an array of points
+    # only used the observations that were close to all points, which gave
+    # wrong densities, or nan when no observation was close to all of them.
+    x = np.linspace(-1, 1, 1000)
+    kde = KDE(x).fit(kernel=kernel, fft=False, bw="silverman")
+    points = np.array([-2.0, -0.95, -0.05, 0.0, 0.05, 0.5, 1.0])
+
+    u = (points - x[:, None]) / kde.bw
+    expected = np.mean(np.where(np.abs(u) <= 1, shape(u), 0), axis=0) / kde.bw
+    assert expected[0] == 0
+
+    npt.assert_allclose(kde.evaluate(points), expected, rtol=1e-12, atol=1e-15)
+    for point, value in zip(points, expected, strict=True):
+        npt.assert_allclose(kde.evaluate(point), value, rtol=1e-12, atol=1e-15)
